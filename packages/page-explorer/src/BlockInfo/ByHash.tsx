@@ -78,18 +78,15 @@ function BlockByHash ({ className = '', error, value }: Props): React.ReactEleme
       .all([
         api
           .at(value)
-          .then((apiAt) =>
-            Promise.all([
+          .then((apiAt) => Promise.all([
               Promise.resolve(apiAt.runtimeVersion),
-              apiAt.query.system
-                .events()
+            api.derive.chain.getHeader(value).then(_header => apiAt.query.system
+                .eventsMap(_header.number.unwrap())
                 .catch((error: Error) => {
                   mountedRef.current && setEvtError(error);
-
                   return null;
-                })
-            ])
-          ),
+                }))
+            ])),
         api.rpc.chain.getBlock(value),
         api.derive.chain.getHeader(value)
       ])
