@@ -1,5 +1,4 @@
-// Copyright 2017-2023 @polkadot/dev authors & contributors
-// SPDX-License-Identifier: Apache-2.0
+/* ...固定内容...*/
 
 import baseConfig from '@polkadot/dev/config/eslint';
 
@@ -10,7 +9,8 @@ export default [
       // add override for any (a metric ton of them, initial conversion)
       '@typescript-eslint/no-explicit-any': 'off',
       // we generally use this in isFunction, not via calling
-      '@typescript-eslint/unbound-method': 'off'
+      '@typescript-eslint/unbound-method': 'off',
+      'header/header': 'off'
     }
   }
 ];

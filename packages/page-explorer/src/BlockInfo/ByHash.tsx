@@ -82,6 +82,8 @@ function BlockByHash ({ className = '', error, value }: Props): React.ReactEleme
             Promise.resolve(apiAt.runtimeVersion),
             api.derive.chain.getHeader(value).then((_header) => {
               return apiAt.query.system.threads(_header.number.unwrap()).then((num) => {
+                console.log('apiAt.query.system.threads', num);
+
                 return Promise.all(new Array(num + 1).fill('').map((_, i) => {
                   return apiAt.query.system
                     .eventsMap(_header.number.unwrap(), i)
@@ -91,6 +93,20 @@ function BlockByHash ({ className = '', error, value }: Props): React.ReactEleme
                       return null;
                     });
                 }));
+              }).then((res: any[]) => {
+                console.log('eventsMap', res);
+
+                let list: any[] = [];
+
+                // eslint-disable-next-line @typescript-eslint/no-for-in-array
+                for (const l of res) {
+                  list = list.concat(l);
+                }
+
+                console.log('eventsMap-list', list);
+
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+                return list;
               });
             })
           ])),
@@ -98,6 +114,8 @@ function BlockByHash ({ className = '', error, value }: Props): React.ReactEleme
         api.derive.chain.getHeader(value)
       ])
       .then((result): void => {
+        console.log('result', result);
+
         mountedRef.current && setState(transformResult(result));
       })
       .catch((error: Error): void => {
