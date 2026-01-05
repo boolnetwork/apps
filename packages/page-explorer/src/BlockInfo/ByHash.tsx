@@ -79,14 +79,21 @@ function BlockByHash ({ className = '', error, value }: Props): React.ReactEleme
         api
           .at(value)
           .then((apiAt) => Promise.all([
-              Promise.resolve(apiAt.runtimeVersion),
-            api.derive.chain.getHeader(value).then(_header => apiAt.query.system
-                .eventsMap(_header.number.unwrap())
-                .catch((error: Error) => {
-                  mountedRef.current && setEvtError(error);
-                  return null;
-                }))
-            ])),
+            Promise.resolve(apiAt.runtimeVersion),
+            api.derive.chain.getHeader(value).then((_header) => {
+              return apiAt.query.system.threads(_header.number.unwrap()).then((num) => {
+                return Promise.all(new Array(num + 1).fill('').map((_, i) => {
+                  return apiAt.query.system
+                    .eventsMap(_header.number.unwrap(), i)
+                    .catch((error: Error) => {
+                      mountedRef.current && setEvtError(error);
+
+                      return null;
+                    });
+                }));
+              });
+            })
+          ])),
         api.rpc.chain.getBlock(value),
         api.derive.chain.getHeader(value)
       ])
@@ -128,7 +135,7 @@ function BlockByHash ({ className = '', error, value }: Props): React.ReactEleme
           ? (
             <tr>
               <td colSpan={6}>
-                <MarkError content={t<string>('Unable to retrieve the specified block details. {{error}}', { replace: { error: blkError.message } }) } />
+                <MarkError content={t<string>('Unable to retrieve the specified block details. {{error}}', { replace: { error: blkError.message } })} />
               </td>
             </tr>
           )
