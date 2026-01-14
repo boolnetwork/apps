@@ -6,8 +6,9 @@ import type { Vec } from '@polkadot/types';
 import type { EventRecord } from '@polkadot/types/interfaces';
 import type { BlockEvents, IndexedEvent, KeyedEvent } from './types.js';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
+import { useBlockAuthors } from '@polkadot/react-hooks';
 import { stringify, stringToU8a } from '@polkadot/util';
 import { xxhashAsHex } from '@polkadot/util-crypto';
 
@@ -104,10 +105,60 @@ async function manageEvents (api: ApiPromise, prev: PrevHashes, records: Vec<Eve
 export function BlockEventsCtxRoot ({ children }: Props): React.ReactElement<Props> {
   const { api, isApiReady } = useApi();
   const [state, setState] = useState<BlockEvents>(DEFAULT_EVENTS);
-  const records = useCall<Vec<EventRecord>>(isApiReady && api.query.system.eventsMap);
+  const { lastHeader } = useBlockAuthors();
+
+  const eventsApi = useMemo<((cb: (records: Vec<EventRecord>) => void) => Promise<() => void>) | null>(() => {
+    if (!lastHeader) {
+      return null;
+    }
+
+    return (callback) =>
+      api
+        .at(lastHeader.hash)
+        .then((apiAt) =>
+          apiAt.query.system.threads(lastHeader.number.unwrap())
+            .then((num) => {
+              const threads = num.toNumber();
+
+              return Promise.all(new Array(threads + 1).fill(null).map((_, i) =>
+                apiAt.query.system
+                  .eventsMap(lastHeader.number.unwrap(), i)
+                  .catch((error: Error) => {
+                    console.error(error);
+
+                    return null;
+                  })
+              ));
+            })
+            .then((res) => {
+              let list: EventRecord[] = [];
+
+              console.log(res, 'EventRecord');
+
+              for (const entries of res) {
+                if (entries) {
+                  list = list.concat(Array.from(entries));
+                }
+              }
+
+              console.log(list, 'EventRecord');
+
+              const merged = api.createType('Vec<EventRecord>', list);
+
+              (merged as { createdAtHash?: typeof lastHeader.hash }).createdAtHash = lastHeader.hash;
+              callback(merged);
+
+              return (): void => undefined;
+            })
+        );
+  }, [api, lastHeader]);
+
+  const records = useCall<Vec<EventRecord>>(isApiReady && eventsApi);
   const prevHashes = useRef({ block: null, event: null });
 
   useEffect((): void => {
+    console.log('records', records);
+
     records && manageEvents(api, prevHashes.current, records, setState).catch(console.error);
   }, [api, prevHashes, records, setState]);
 
