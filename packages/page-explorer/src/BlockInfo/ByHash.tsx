@@ -74,48 +74,46 @@ function BlockByHash ({ className = '', error, value }: Props): React.ReactEleme
   );
 
   useEffect((): void => {
+    setEvtError(undefined);
+
     value && Promise
       .all([
         api
           .at(value)
           .then((apiAt) => Promise.all([
             Promise.resolve(apiAt.runtimeVersion),
-            api.derive.chain.getHeader(value).then((_header) => {
-              return apiAt.query.system.threads(_header.number.unwrap()).then((num) => {
-                console.log('apiAt.query.system.threads', num);
+            api.derive.chain.getHeader(value).then((_header) =>
+              apiAt.query.system.threads(_header.number.unwrap())
+                .then((num) => {
+                  const threads = Number(num.toString());
 
-                return Promise.all(new Array(num + 1).fill('').map((_, i) => {
-                  return apiAt.query.system
-                    .eventsMap(_header.number.unwrap(), i)
-                    .catch((error: Error) => {
-                      mountedRef.current && setEvtError(error);
+                  return Promise.all(new Array(threads + 1).fill(null).map((_, i) =>
+                    apiAt.query.system
+                      .eventsMap(_header.number.unwrap(), i)
+                      .catch((error: Error) => {
+                        mountedRef.current && setEvtError(error);
 
-                      return null;
-                    });
-                }));
-              }).then((res: any[]) => {
-                console.log('eventsMap', res);
+                        return null;
+                      })
+                  ));
+                })
+                .then((res) => {
+                  let list: EventRecord[] = [];
 
-                let list: any[] = [];
+                  for (const entries of res) {
+                    if (entries) {
+                      list = list.concat(entries as unknown as EventRecord[]);
+                    }
+                  }
 
-                // eslint-disable-next-line @typescript-eslint/no-for-in-array
-                for (const l of res) {
-                  list = list.concat(l);
-                }
-
-                console.log('eventsMap-list', list);
-
-                // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-                return list;
-              });
-            })
+                  return list;
+                })
+            )
           ])),
         api.rpc.chain.getBlock(value),
         api.derive.chain.getHeader(value)
       ])
       .then((result): void => {
-        console.log('result', result);
-
         mountedRef.current && setState(transformResult(result));
       })
       .catch((error: Error): void => {
