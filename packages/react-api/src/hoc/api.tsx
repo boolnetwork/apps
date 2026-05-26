@@ -10,7 +10,8 @@ import { ApiCtx } from '@polkadot/react-hooks/ctx/Api';
 import { assert } from '@polkadot/util';
 
 export default function withApi <P extends ApiProps> (Inner: React.ComponentType<P>, defaultProps: DefaultProps = {}): React.ComponentType<any> {
-  class WithApi extends React.PureComponent<SubtractProps<P, ApiProps>> {
+  // Must not be PureComponent: context (api) updates must reach Inner so storage subscriptions can follow ApiPromise.
+  class WithApi extends React.Component<SubtractProps<P, ApiProps>> {
     private component: any = React.createRef();
 
     public override render (): React.ReactNode {

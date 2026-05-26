@@ -1,36 +1,27 @@
 // Copyright 2017-2023 @polkadot/app-storage authors & contributors
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ApiPromise } from '@polkadot/api';
 import type { QueryableStorageEntry } from '@polkadot/api/types';
-import type { ComponentRenderer, DefaultProps, RenderFn } from '@polkadot/react-api/hoc/types';
 import type { ConstValue } from '@polkadot/react-components/InputConsts/types';
 import type { Option, Raw } from '@polkadot/types';
-import type { Registry } from '@polkadot/types/types';
+import type { Codec, Registry } from '@polkadot/types/types';
 import type { QueryTypes, StorageModuleQuery } from './types.js';
 
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { withCallDiv } from '@polkadot/react-api/hoc';
 import { Button, Labelled, styled } from '@polkadot/react-components';
 import { useApi } from '@polkadot/react-hooks';
 import valueToText from '@polkadot/react-params/valueToText';
 import { getSiName } from '@polkadot/types/metadata/util';
 import { unwrapStorageType } from '@polkadot/types/util';
-import { compactStripLength, isU8a, u8aToHex, u8aToString } from '@polkadot/util';
+import { compactStripLength, isCodec, isNull, isU8a, isUndefined, u8aToHex, u8aToString } from '@polkadot/util';
 
 interface Props {
   className?: string;
   onRemove: (id: number) => void;
   value: QueryTypes;
 }
-
-interface CacheInstance {
-  Component: React.ComponentType<any>;
-  render: RenderFn;
-  refresh: (swallowErrors: boolean) => React.ComponentType<any>;
-}
-
-const cache: CacheInstance[] = [];
 
 function keyToName (isConst: boolean, _key: Uint8Array | QueryableStorageEntry<'promise'> | ConstValue): string {
   if (isConst) {
@@ -44,7 +35,6 @@ function keyToName (isConst: boolean, _key: Uint8Array | QueryableStorageEntry<'
   if (isU8a(key)) {
     const [, u8a] = compactStripLength(key);
 
-    // If the string starts with `:`, handle it as a pure string
     return u8a[0] === 0x3a
       ? u8aToString(u8a)
       : u8aToHex(u8a);
@@ -54,7 +44,7 @@ function keyToName (isConst: boolean, _key: Uint8Array | QueryableStorageEntry<'
 }
 
 function constTypeToString (registry: Registry, { meta }: ConstValue): string {
-  return getSiName(registry.lookup, meta.type);
+  return getSiName(registry, meta.type);
 }
 
 function queryTypeToString (registry: Registry, { creator: { meta: { modifier, type } } }: QueryableStorageEntry<'promise'>): string {
@@ -65,108 +55,253 @@ function queryTypeToString (registry: Registry, { creator: { meta: { modifier, t
     : _type;
 }
 
-function createComponent (type: string, Component: React.ComponentType<any>, defaultProps: DefaultProps, renderHelper: ComponentRenderer): { Component: React.ComponentType<any>; render: (createComponent: RenderFn) => React.ComponentType<any>; refresh: (swallowErrors: boolean) => React.ComponentType<any> } {
-  return {
-    Component,
-    // In order to modify the parameters which are used to render the default component, we can use this method
-    refresh: (): React.ComponentType<any> =>
-      renderHelper(
-        (value: unknown) => <pre>{valueToText(type, value as null)}</pre>,
-        defaultProps
-      ),
-    // In order to replace the default component during runtime we can provide a RenderFn to create a new 'plugged' component
-    render: (createComponent: RenderFn): React.ComponentType<any> =>
-      renderHelper(createComponent, defaultProps)
-  };
+function resolveStorageEntry (api: ApiPromise, key: QueryableStorageEntry<'promise'>): QueryableStorageEntry<'promise'> {
+  const { method, section } = key.creator;
+  const sectionApi = (api.query as Record<string, Record<string, QueryableStorageEntry<'promise'>>>)[section];
+
+  return (sectionApi && sectionApi[method]) || key;
 }
 
-function getCachedComponent (registry: Registry, query: QueryTypes): CacheInstance {
-  const { blockHash, id, isConst, key, params = [] } = query as StorageModuleQuery;
+function setCodecState (setData: (v: Codec | undefined) => void, next: unknown): void {
+  if (isUndefined(next) || isNull(next)) {
+    setData(undefined);
 
-  if (!cache[id]) {
-    let renderHelper;
-    let type: string;
-
-    if (isConst) {
-      const { method, section } = key as unknown as ConstValue;
-
-      renderHelper = withCallDiv(`consts.${section}.${method}`, { withIndicator: true });
-      type = constTypeToString(registry, key as unknown as ConstValue);
-    } else {
-      if (isU8a(key)) {
-        // subscribe to the raw key here
-        renderHelper = withCallDiv('rpc.state.subscribeStorage', {
-          paramName: 'params',
-          paramValid: true,
-          params: [[key]],
-          transform: ([data]: Option<Raw>[]): Option<Raw> => data,
-          withIndicator: true
-        });
-      } else {
-        const values: unknown[] = params.map(({ value }) => value);
-        const { creator: { meta: { type } } } = key;
-        const allCount = type.isPlain
-          ? 0
-          : type.asMap.hashers.length;
-        const isEntries = values.length !== allCount;
-
-        renderHelper = withCallDiv('subscribe', {
-          paramName: 'params',
-          paramValid: true,
-          params: isEntries
-            ? [key.entries, ...values]
-            : blockHash
-              // eslint-disable-next-line deprecation/deprecation
-              ? [key.at, blockHash, ...values]
-              : [key, ...values],
-          withIndicator: true
-        });
-      }
-
-      type = key.creator && key.creator.meta
-        ? queryTypeToString(registry, key)
-        : 'Raw';
-    }
-
-    const defaultProps = { className: 'ui--output' };
-    const Component = renderHelper(
-      // By default we render a simple div node component with the query results in it
-      (value: unknown) => <pre>{valueToText(type, value as null)}</pre>,
-      defaultProps
-    );
-
-    cache[query.id] = createComponent(type, Component, defaultProps, renderHelper);
+    return;
   }
 
-  return cache[id];
+  if (!isCodec(next)) {
+    setData(next as Codec);
+
+    return;
+  }
+
+  try {
+    setData(next.clone());
+  } catch {
+    setData(next);
+  }
+}
+
+function ConstOutput ({ api, query }: { api: ApiPromise; query: QueryTypes & { isConst: true } }): React.ReactElement {
+  const key = query.key as unknown as ConstValue;
+  const typeStr = useMemo(
+    () => constTypeToString(api.registry, key),
+    [api.registry, key]
+  );
+  const sectionConsts = (api.consts as Record<string, Record<string, Codec>>)[key.section];
+  const val = sectionConsts[key.method];
+
+  return (
+    <pre className='ui--output'>{valueToText(typeStr, val)}</pre>
+  );
+}
+
+function RawStorageOutput ({ api, rawKey }: { api: ApiPromise; rawKey: Uint8Array }): React.ReactElement {
+  const [data, setData] = useState<Option<Raw> | undefined>();
+  const [flash, setFlash] = useState(false);
+  const mountedRef = useRef(true);
+
+  useEffect((): (() => void) | void => {
+    mountedRef.current = true;
+    let unsub: (() => void) | undefined;
+
+    void api.isReady
+      .then(async () => {
+        try {
+          unsub = await api.rpc.state.subscribeStorage(
+            [[rawKey]],
+            (maybeSet: unknown, maybeChanges?: unknown): void => {
+              if (!mountedRef.current) {
+                return;
+              }
+
+              const changes = (maybeChanges ?? maybeSet) as unknown;
+              const first = Array.isArray(changes) ? changes[0] : changes;
+
+              try {
+                const opt = api.registry.createType('Option<Raw>', first) as Option<Raw>;
+
+                setData(opt);
+              } catch {
+                setData(undefined);
+              }
+
+              setFlash(true);
+              window.setTimeout(() => {
+                mountedRef.current && setFlash(false);
+              }, 1500);
+            }
+          );
+        } catch (e) {
+          console.error('subscribeStorage failed', e);
+        }
+      })
+      .catch((e: Error) => console.error(e));
+
+    return (): void => {
+      mountedRef.current = false;
+      unsub && unsub();
+    };
+  }, [api, rawKey]);
+
+  return (
+    <div className={`ui--output${flash ? ' rx--updated' : ''}`}>
+      <pre>{valueToText('Raw', data as null)}</pre>
+    </div>
+  );
+}
+
+function ModuleStorageOutput ({ api, query }: { api: ApiPromise; query: StorageModuleQuery }): React.ReactElement {
+  const [data, setData] = useState<Codec | undefined>();
+  const [flash, setFlash] = useState(false);
+  const mountedRef = useRef(true);
+
+  const storageKey = useMemo(
+    () => resolveStorageEntry(api, query.key as QueryableStorageEntry<'promise'>),
+    [api, query.key]
+  );
+  const typeStr = useMemo(
+    () => queryTypeToString(api.registry, storageKey),
+    [api.registry, storageKey]
+  );
+  const argValues = useMemo(
+    () => query.params.map(({ value }) => value),
+    [query.params]
+  );
+  const argsKey = useMemo(
+    () => query.params.map((p, i) => `${i}:${p.isValid}:${String(p.value)}`).join('|'),
+    [query.params]
+  );
+
+  const { blockHash } = query;
+  const metaType = storageKey.creator.meta.type;
+  const allCount = metaType.isPlain
+    ? 0
+    : metaType.asMap.hashers.length;
+  const isEntriesMode = argValues.length !== allCount;
+
+  useEffect((): (() => void) | void => {
+    mountedRef.current = true;
+    let unsub: (() => void) | undefined;
+
+    void api.isReady
+      .then(async () => {
+        if (!mountedRef.current) {
+          return;
+        }
+
+        const sk = resolveStorageEntry(api, query.key as QueryableStorageEntry<'promise'>);
+
+        try {
+          if (blockHash) {
+            const v = await sk.at(blockHash, ...argValues as []);
+
+            mountedRef.current && setCodecState(setData, v);
+
+            return;
+          }
+
+          if (isEntriesMode) {
+            unsub = await (sk.entries as (...a: unknown[]) => Promise<() => void>)(
+              ...argValues,
+              (result: unknown): void => {
+                if (!mountedRef.current) {
+                  return;
+                }
+
+                setCodecState(setData, result);
+                setFlash(true);
+                window.setTimeout(() => mountedRef.current && setFlash(false), 1500);
+              }
+            );
+          } else {
+            // Some nodes under very fast block times do not reliably emit storage subscription updates.
+            // Refresh on each new head (same cost order as a subscription) so the UI always tracks the chain.
+            const pull = async (): Promise<void> => {
+              if (!mountedRef.current) {
+                return;
+              }
+
+              try {
+                const v = allCount === 0
+                  ? await (sk as () => Promise<unknown>)()
+                  : await (sk as (...args: unknown[]) => Promise<unknown>)(...argValues);
+
+                setCodecState(setData, v);
+                setFlash(true);
+                window.setTimeout(() => mountedRef.current && setFlash(false), 1500);
+              } catch (err) {
+                console.error('storage head pull failed', err);
+              }
+            };
+
+            await pull();
+            unsub = await api.rpc.chain.subscribeNewHeads(pull);
+          }
+        } catch (e) {
+          console.error('storage subscribe failed', e);
+        }
+      })
+      .catch((e: Error) => console.error(e));
+
+    return (): void => {
+      mountedRef.current = false;
+      unsub && unsub();
+    };
+  }, [
+    api,
+    api.genesisHash.toHex(),
+    blockHash,
+    argsKey,
+    isEntriesMode,
+    allCount,
+    query.key,
+    storageKey.creator.section,
+    storageKey.creator.method
+  ]);
+
+  return (
+    <div className={`ui--output${flash ? ' rx--updated' : ''}`}>
+      <pre>{valueToText(typeStr, data as null)}</pre>
+    </div>
+  );
 }
 
 function Query ({ className = '', onRemove, value }: Props): React.ReactElement<Props> | null {
   const { api } = useApi();
-  const [{ Component }, callName, callType] = useMemo(
-    () => [
-      getCachedComponent(api.registry, value),
-      keyToName(value.isConst, value.key),
+
+  const callName = useMemo(
+    () => keyToName(value.isConst, value.key),
+    [value.isConst, value.key]
+  );
+  const callType = useMemo(
+    () =>
       value.isConst
         ? constTypeToString(api.registry, value.key as unknown as ConstValue)
         : isU8a(value.key)
           ? 'Raw'
-          : queryTypeToString(api.registry, value.key as QueryableStorageEntry<'promise'>)
-    ],
-    [api, value]
+          : queryTypeToString(
+            api.registry,
+            resolveStorageEntry(api, value.key as QueryableStorageEntry<'promise'>)
+          ),
+    [api.registry, value]
   );
 
   const _onRemove = useCallback(
     (): void => {
-      delete cache[value.id];
-
       onRemove(value.id);
     },
-    [onRemove, value]
+    [onRemove, value.id]
   );
 
-  if (!Component) {
-    return null;
+  let body: React.ReactNode;
+
+  if (value.isConst) {
+    body = <ConstOutput api={api} query={value} />;
+  } else if (isU8a(value.key)) {
+    body = <RawStorageOutput api={api} rawKey={value.key} />;
+  } else {
+    body = <ModuleStorageOutput api={api} query={value as StorageModuleQuery} />;
   }
 
   return (
@@ -179,7 +314,7 @@ function Query ({ className = '', onRemove, value }: Props): React.ReactElement<
             </div>
           }
         >
-          <Component />
+          {body}
         </Labelled>
       </div>
       <div className='storage--actionrow-buttons'>
@@ -220,7 +355,7 @@ const StyledDiv = styled.div`
   }
 
   .storage--actionrow-buttons {
-    margin-top: -0.25rem; /* offset parent spacing for buttons */
+    margin-top: -0.25rem;
   }
 `;
 

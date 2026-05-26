@@ -14,7 +14,7 @@ import type { Options } from './types.js';
 
 import React from 'react';
 
-import { assert, isNull, isUndefined, nextTick } from '@polkadot/util';
+import { assert, isCodec, isNull, isUndefined, nextTick } from '@polkadot/util';
 
 import echoTransform from '../transform/echo.js';
 import { isEqual, triggerChange } from '../util/index.js';
@@ -39,7 +39,35 @@ const NO_SKIP = (): boolean => false;
 // a mapping of actual error messages that has already been shown
 const errorred: Record<string, boolean> = {};
 
+/** Scale snapshot for Codec; avoids false "unchanged" when the API mutates one instance in place (common under fast block times). */
+function codecSnapshot (value: unknown): string | undefined {
+  if (isUndefined(value) || isNull(value)) {
+    return `${value}`;
+  }
+
+  if (isCodec(value)) {
+    return `${value.toRawType()}:${value.toU8a(true).toString()}`;
+  }
+
+  return undefined;
+}
+
+function cloneIfCodec (value: unknown): unknown {
+  if (isCodec(value)) {
+    try {
+      return value.clone();
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+}
+
 export default function withCall<P extends ApiProps> (endpoint: string, { at, atProp, callOnResult, fallbacks, isMulti = false, paramName, paramPick, paramValid = false, params = [], propName, skipIf = NO_SKIP, transform = echoTransform, withIndicator = false }: Options = {}): (Inner: React.ComponentType<ApiProps>) => React.ComponentType<any> {
+  // Storage subscriptions: always emit UI updates on every callback (fast blocks + in-place Codec updates).
+  const forceSubscribeUiTick = endpoint === 'subscribe' || endpoint === 'rpc.state.subscribeStorage';
+
   return (Inner: React.ComponentType<ApiProps>): React.ComponentType<SubtractProps<P, ApiProps>> => {
     class WithPromise extends React.Component<P, State> {
       public override state: State = {
@@ -55,6 +83,8 @@ export default function withCall<P extends ApiProps> (endpoint: string, { at, at
       private propName: string;
 
       private timerId = -1;
+
+      private lastCodecSnapshot?: string;
 
       constructor (props: P) {
         super(props);
@@ -257,20 +287,57 @@ export default function withCall<P extends ApiProps> (endpoint: string, { at, at
           this.destroy();
           this.destroy = undefined;
         }
+
+        this.lastCodecSnapshot = undefined;
       }
 
       private triggerUpdate (props: any, value?: any): void {
         try {
           const callResult = (props.transform || transform)(value);
 
-          if (!this.isActive || isEqual(callResult, this.state.callResult)) {
+          if (!this.isActive) {
             return;
           }
 
-          triggerChange(callResult as OnChangeCb, callOnResult, props.callOnResult as OnChangeCb);
+          if (forceSubscribeUiTick) {
+            const snap = codecSnapshot(callResult);
+
+            if (snap !== undefined) {
+              this.lastCodecSnapshot = snap;
+            }
+
+            const nextResult = cloneIfCodec(callResult);
+
+            triggerChange(nextResult as OnChangeCb, callOnResult, props.callOnResult as OnChangeCb);
+
+            this.nextState({
+              callResult: nextResult,
+              callUpdated: true,
+              callUpdatedAt: Date.now()
+            });
+
+            return;
+          }
+
+          const snap = codecSnapshot(callResult);
+          const unchanged = snap !== undefined
+            ? snap === this.lastCodecSnapshot
+            : isEqual(callResult, this.state.callResult);
+
+          if (unchanged) {
+            return;
+          }
+
+          if (snap !== undefined) {
+            this.lastCodecSnapshot = snap;
+          }
+
+          const nextResult = cloneIfCodec(callResult);
+
+          triggerChange(nextResult as OnChangeCb, callOnResult, props.callOnResult as OnChangeCb);
 
           this.nextState({
-            callResult,
+            callResult: nextResult,
             callUpdated: true,
             callUpdatedAt: Date.now()
           });

@@ -240,7 +240,7 @@ async function createApi (apiUrl: string, signer: ApiSigner, onError: (error: un
       provider,
       registry: statics.registry,
       signer,
-      types,
+      types: objectSpread({}, types, { Index: 'u64' }),
       typesBundle
     });
 

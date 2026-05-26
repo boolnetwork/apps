@@ -30,7 +30,6 @@ function useApiUrlImpl (url?: null | string | string[]): ApiPromise | null {
       : [],
     [url]
   );
-
   useEffect((): () => void => {
     return (): void => {
       providerRef.current = disconnect(providerRef.current);
@@ -45,6 +44,7 @@ function useApiUrlImpl (url?: null | string | string[]): ApiPromise | null {
       ApiPromise
         .create({
           provider: (providerRef.current = new WsProvider(urls)),
+          types: { Index: 'u64' },
           typesBundle
         })
         .then((api) => mountedRef.current && setState(api))
