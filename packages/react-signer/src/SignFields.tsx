@@ -9,6 +9,7 @@ import { InputNumber, Modal, Output } from '@polkadot/react-components';
 import { useApi } from '@polkadot/react-hooks';
 import { BN, BN_ZERO } from '@polkadot/util';
 
+import { DEFAULT_NONCE_ERA_PERIOD, hasNonceEra, withNonceEra } from './nonceEra.js';
 import { useTranslation } from './translate.js';
 
 interface Props {
@@ -25,6 +26,15 @@ function SignFields ({ address, onChange, signedTx }: Props): React.ReactElement
   const { t } = useTranslation();
 
   useEffect((): void => {
+    if (hasNonceEra(api)) {
+      api.rpc.chain
+        .getHeader()
+        .then(({ number }) => setBlocks(number.unwrap().addn(DEFAULT_NONCE_ERA_PERIOD)))
+        .catch(console.error);
+    }
+  }, [api]);
+
+  useEffect((): void => {
     address && api.derive.balances
       .account(address)
       .then(({ accountNonce }) => setNonce(accountNonce))
@@ -32,8 +42,8 @@ function SignFields ({ address, onChange, signedTx }: Props): React.ReactElement
   }, [address, api]);
 
   useEffect((): void => {
-    onChange({ era: blocks.toNumber(), nonce });
-  }, [blocks, nonce, onChange]);
+    onChange(withNonceEra(api, { era: blocks.toNumber(), nonce }, blocks));
+  }, [api, blocks, nonce, onChange]);
 
   const _setBlocks = useCallback(
     (blocks: BN = BN_ZERO) => setBlocks(blocks),
@@ -59,7 +69,7 @@ function SignFields ({ address, onChange, signedTx }: Props): React.ReactElement
         <InputNumber
           isDisabled={!!signedTx}
           isZeroable
-          label={t<string>('Lifetime (# of blocks)')}
+          label={hasNonceEra(api) ? t<string>('Valid until block') : t<string>('Lifetime (# of blocks)')}
           labelExtra={t<string>('Set to 0 to make transaction immortal')}
           onChange={_setBlocks}
           value={blocks}

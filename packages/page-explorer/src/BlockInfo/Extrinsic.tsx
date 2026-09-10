@@ -25,16 +25,29 @@ interface Props {
   withLink: boolean;
 }
 
+interface NonceEra {
+  asMortal: INumber;
+  isMortal: boolean;
+}
+
 const BN_TEN_THOUSAND = new BN(10_000);
 
 function getEra ({ era }: Extrinsic, blockNumber?: BlockNumber): [number, number] | null {
-  if (blockNumber && era.isMortalEra) {
+  if (blockNumber && era?.isMortalEra) {
     const mortalEra = era.asMortalEra;
 
     return [mortalEra.birth(blockNumber.toNumber()), mortalEra.death(blockNumber.toNumber())];
   }
 
   return null;
+}
+
+function getNonceEra (value: Extrinsic): NonceEra | undefined {
+  return (value as Extrinsic & { nonceEra?: NonceEra }).nonceEra;
+}
+
+function getNonce (value: Extrinsic): ICompact<INumber> | undefined {
+  return (value as Extrinsic & { nonce?: ICompact<INumber> }).nonce;
 }
 
 function filterEvents (index: number, events?: KeyedEvent[] | null, maxBlockWeight?: BN): [DispatchInfo | undefined, BN | undefined, number, KeyedEvent[]] {
@@ -90,6 +103,16 @@ function ExtrinsicDisplay ({ blockNumber, className = '', events, index, maxBloc
   const mortality = useMemo(
     (): string | undefined => {
       if (value.isSigned) {
+        const nonceEra = getNonceEra(value);
+
+        if (nonceEra) {
+          return nonceEra.isMortal
+            ? t<string>('mortal, valid until #{{endsAt}}', {
+              replace: { endsAt: formatNumber(nonceEra.asMortal) }
+            })
+            : t<string>('immortal');
+        }
+
         const era = getEra(value, blockNumber);
 
         return era
@@ -99,7 +122,9 @@ function ExtrinsicDisplay ({ blockNumber, className = '', events, index, maxBloc
               startAt: formatNumber(era[0])
             }
           })
-          : t<string>('immortal');
+          : value.era
+            ? t<string>('immortal')
+            : undefined;
       }
 
       return undefined;
@@ -111,6 +136,7 @@ function ExtrinsicDisplay ({ blockNumber, className = '', events, index, maxBloc
     () => filterEvents(index, events, maxBlockWeight),
     [index, events, maxBlockWeight]
   );
+  const nonce = getNonce(value);
 
   return (
     <StyledTr
@@ -162,9 +188,11 @@ function ExtrinsicDisplay ({ blockNumber, className = '', events, index, maxBloc
           ? (
             <>
               <AddressMini value={value.signer} />
-              <div className='explorer--BlockByHash-nonce'>
-                {t<string>('index')} {formatNumber(value.nonce)}
-              </div>
+              {nonce && (
+                <div className='explorer--BlockByHash-nonce'>
+                  {t<string>('index')} {formatNumber(nonce)}
+                </div>
+              )}
               <LinkExternal
                 data={value.hash.toHex()}
                 type='extrinsic'

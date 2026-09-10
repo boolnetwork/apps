@@ -51,6 +51,7 @@
   "max": "max",
   "min": "min",
   "mortal, valid from #{{startAt}} to #{{endsAt}}": "mortal, valid from #{{startAt}} to #{{endsAt}}",
+  "mortal, valid until #{{endsAt}}": "mortal, valid until #{{endsAt}}",
   "no": "no",
   "no peers connected": "no peers connected",
   "our best": "our best",

@@ -24,6 +24,7 @@ import { addressEq } from '@polkadot/util-crypto';
 
 import { AccountSigner, LedgerSigner, QrSigner } from './signers/index.js';
 import Address from './Address.js';
+import { DEFAULT_NONCE_ERA_PERIOD, hasNonceEra, withNonceEra, withNonceEraSigner } from './nonceEra.js';
 import Qr from './Qr.js';
 import SignFields from './SignFields.js';
 import Tip from './Tip.js';
@@ -175,7 +176,7 @@ async function extractParams (api: ApiPromise, address: string, options: Partial
 
     assert(injected, `Unable to find a signer for ${address}`);
 
-    return ['signing', address, { ...options, signer: injected.signer }];
+    return ['signing', address, { ...options, signer: withNonceEraSigner(api, injected.signer) }];
   }
 
   assert(addressEq(address, pair.address), `Unable to retrieve keypair for ${address}`);
@@ -288,14 +289,23 @@ function TxSigned ({ className, currentItem, isQueueSubmit, queueSize, requestAd
   const _onSend = useCallback(
     async (queueSetTxStatus: QueueTxMessageSetStatus, currentItem: QueueTx, senderInfo: AddressProxy): Promise<void> => {
       if (senderInfo.signAddress) {
-        const [tx, [status, pairOrAddress, options]] = await Promise.all([
+        const [tx, header, [status, pairOrAddress, options]] = await Promise.all([
           wrapTx(api, currentItem, senderInfo),
+          hasNonceEra(api) ? api.rpc.chain.getHeader() : null,
           extractParams(api, senderInfo.signAddress, { nonce: -1, tip }, getLedger, setQrState)
         ]);
 
         queueSetTxStatus(currentItem.id, status);
 
-        await signAndSend(queueSetTxStatus, currentItem, tx, pairOrAddress, options);
+        await signAndSend(
+          queueSetTxStatus,
+          currentItem,
+          tx,
+          pairOrAddress,
+          header
+            ? withNonceEra(api, options, header.number.unwrap().addn(DEFAULT_NONCE_ERA_PERIOD))
+            : options
+        );
       }
     },
     [api, getLedger, tip]

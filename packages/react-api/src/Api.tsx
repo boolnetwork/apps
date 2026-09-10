@@ -4,6 +4,7 @@
 import type { LinkOption } from '@polkadot/apps-config/endpoints/types';
 import type { InjectedExtension } from '@polkadot/extension-inject/types';
 import type { ChainProperties, ChainType } from '@polkadot/types/interfaces';
+import type { RegistryTypes } from '@polkadot/types/types';
 import type { KeyringStore } from '@polkadot/ui-keyring/types';
 import type { ApiProps, ApiState } from './types.js';
 
@@ -229,6 +230,15 @@ async function getLightProvider (chain: string): Promise<ScProvider> {
  */
 async function createApi (apiUrl: string, signer: ApiSigner, onError: (error: unknown) => void): Promise<Record<string, Record<string, string>>> {
   const types = getDevTypes();
+  const registryTypes: RegistryTypes = objectSpread({}, types, {
+    Index: 'u64',
+    NonceEra: {
+      _enum: {
+        Immortal: 'Null',
+        Mortal: 'u64'
+      }
+    }
+  });
   const isLight = apiUrl.startsWith('light://');
 
   try {
@@ -239,8 +249,14 @@ async function createApi (apiUrl: string, signer: ApiSigner, onError: (error: un
     statics.api = new ApiPromise({
       provider,
       registry: statics.registry,
+      signedExtensions: {
+        CheckNonceEra: {
+          extrinsic: { nonceEra: 'NonceEra' },
+          payload: { blockHash: 'Hash' }
+        }
+      },
       signer,
-      types: objectSpread({}, types, { Index: 'u64' }),
+      types: registryTypes,
       typesBundle
     });
 

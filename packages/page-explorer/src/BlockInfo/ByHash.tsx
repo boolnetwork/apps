@@ -80,36 +80,18 @@ function BlockByHash ({ className = '', error, value }: Props): React.ReactEleme
       .all([
         api
           .at(value)
-          .then((apiAt) => Promise.all([
-            Promise.resolve(apiAt.runtimeVersion),
-            api.derive.chain.getHeader(value).then((_header) =>
-              apiAt.query.system.threads(_header.number.unwrap())
-                .then((num) => {
-                  const threads = Number(num.toString());
+          .then((apiAt) =>
+            Promise.all([
+              Promise.resolve(apiAt.runtimeVersion),
+              apiAt.query.system
+                .events()
+                .catch((error: Error) => {
+                  mountedRef.current && setEvtError(error);
 
-                  return Promise.all(new Array(threads + 1).fill(null).map((_, i) =>
-                    apiAt.query.system
-                      .eventsMap(_header.number.unwrap(), i)
-                      .catch((error: Error) => {
-                        mountedRef.current && setEvtError(error);
-
-                        return null;
-                      })
-                  ));
+                  return null;
                 })
-                .then((res) => {
-                  let list: EventRecord[] = [];
-
-                  for (const entries of res) {
-                    if (entries) {
-                      list = list.concat(entries as unknown as EventRecord[]);
-                    }
-                  }
-
-                  return list;
-                })
-            )
-          ])),
+            ])
+          ),
         api.rpc.chain.getBlock(value),
         api.derive.chain.getHeader(value)
       ])
